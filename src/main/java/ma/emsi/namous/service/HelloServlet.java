@@ -1,4 +1,4 @@
-package ma.emsi.namous.tp1namous;
+package ma.emsi.namous.service;
 
 import java.io.*;
 import jakarta.servlet.http.*;
