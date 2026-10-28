@@ -1,7 +1,8 @@
-package ma.emsi.namous.jsf;// A modifier...
+package ma.emsi.namous.jsf;
 
+import ma.emsi.namous.llm.JsonAdapterPourGemini;
+import ma.emsi.namous.llm.LlmInteraction;
 
-import ma.emsi.namous.service.GenerateurReponse;
 import jakarta.faces.application.FacesMessage;
 import jakarta.faces.context.FacesContext;
 import jakarta.faces.model.SelectItem;
@@ -11,8 +12,8 @@ import jakarta.inject.Named;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
-
 /**
  * Backing bean pour la page JSF index.xhtml.
  * Portée view pour conserver l'état de la conversation qui dure pendant plusieurs requêtes HTTP.
@@ -47,22 +48,37 @@ public class Bb implements Serializable {
      * Dernière réponse de l'API OpenAI.
      */
     private String reponse;
+
+    /**
+     * Active ou désactive le mode debug.
+     */
+    private boolean debug;
+
+    /**
+     * JSON de la requête envoyée à Gemini.
+     */
+    private String texteRequeteJson;
+
+    /**
+     * JSON de la réponse reçue de Gemini.
+     */
+    private String texteReponseJson;
+
     /**
      * La conversation depuis le début.
      */
     private StringBuilder conversation = new StringBuilder();
 
-
-    private int nombreMystere = 1 + (int) (Math.random() * 20);
-    private int nombreEssais = 0;
-    private boolean partieTerminee = false;
-
-
     /**
      * Service pour modifier la question et générer la réponse.
      */
+    /*
     @Inject
     private GenerateurReponse generateurReponse;
+    */
+    // Service pour interroger le llm
+    @Inject
+    private JsonAdapterPourGemini jsonAdapter;
 
     /**
      * Contexte JSF. Utilisé pour qu'un message d'erreur s'affiche dans le formulaire.
@@ -77,7 +93,7 @@ public class Bb implements Serializable {
     }
 
     public String getRoleSysteme() {
-        return roleSysteme;
+        return this.roleSysteme;
     }
 
     public void setRoleSysteme(String roleSysteme) {
@@ -85,11 +101,11 @@ public class Bb implements Serializable {
     }
 
     public boolean isRoleSystemeChangeable() {
-        return roleSystemeChangeable;
+        return this.roleSystemeChangeable;
     }
 
     public String getQuestion() {
-        return question;
+        return this.question;
     }
 
     public void setQuestion(String question) {
@@ -97,7 +113,7 @@ public class Bb implements Serializable {
     }
 
     public String getReponse() {
-        return reponse;
+        return this.reponse;
     }
 
     /**
@@ -109,6 +125,32 @@ public class Bb implements Serializable {
         this.reponse = reponse;
     }
 
+
+    public boolean isDebug() {
+        return debug;
+    }
+
+    public void setDebug(boolean debug) {
+        this.debug = debug;
+    }
+
+    public String getTexteRequeteJson() {
+        return texteRequeteJson;
+    }
+
+    public void setTexteRequeteJson(String texteRequeteJson) {
+        this.texteRequeteJson = texteRequeteJson;
+    }
+
+    public String getTexteReponseJson() {
+        return texteReponseJson;
+    }
+
+    public void setTexteReponseJson(String texteReponseJson) {
+        this.texteReponseJson = texteReponseJson;
+    }
+
+
     public String getConversation() {
         return conversation.toString();
     }
@@ -118,57 +160,45 @@ public class Bb implements Serializable {
     }
 
     /**
-     * Envoie la question au serveur.
-     * En attendant de l'envoyer à un LLM, le serveur fait un traitement quelconque, juste pour tester :
-     * Le traitement consiste à copier la question en minuscules et à l'entourer avec "||". Le rôle système
-     * est ajouté au début de la première réponse.
+     * Envoie la question à l'API du LLM.
      *
      * @return null pour rester sur la même page.
      */
-
     public String envoyer() {
-        if (question == null || question.isBlank()) {
-            FacesMessage message = new FacesMessage(
-                    FacesMessage.SEVERITY_ERROR,
-                    "Texte question vide",
-                    "Il manque le texte de la question"
-            );
+        if (this.question == null || this.question.isBlank()) {
+            FacesMessage message = new FacesMessage(FacesMessage.SEVERITY_ERROR,
+                    "Pas de question", "Il manque la question");
             facesContext.addMessage(null, message);
             return null;
         }
 
-        if (partieTerminee) {
-            reponse = "Partie terminée ! Clique sur Nouveau chat pour rejouer.";
-            afficherConversation();
-            return null;
-        }
+        // Traite la question pour construire la réponse.
+        if (this.conversation.isEmpty()) { // Si la conversation n'a pas encore commencé
+            this.roleSystemeChangeable = false;
 
-        if (conversation.isEmpty()) {
-            roleSystemeChangeable = false;
+            // Transmet le rôle système
+            this.jsonAdapter.setSystemRole(this.roleSysteme);
         }
 
         try {
-            int proposition = Integer.parseInt(question.trim());
-
-            if (proposition >= 1 && proposition <= 20) {
-                nombreEssais++;
-            }
-        } catch (NumberFormatException e) {
-            // Une saisie non numérique ne compte pas comme un essai.
+            LlmInteraction interaction = jsonAdapter.envoyerRequete(question);
+            this.reponse = interaction.reponseExtraite();
+            this.texteRequeteJson = interaction.questionJson();
+            this.texteReponseJson = interaction.reponseJson();
+        } catch (Exception e) {
+            this.reponse = "Erreur : " + e.getMessage();
+            FacesMessage message =
+                    new FacesMessage(FacesMessage.SEVERITY_ERROR,
+                            "Problème de connexion avec l'API du LLM",
+                            "Problème de connexion avec l'API du LLM" + e.getMessage() + "\n" + Arrays.toString(e.getStackTrace()));
+            facesContext.addMessage(null, message);
         }
 
-        reponse = generateurReponse.genererReponse(
-                question, nombreMystere, nombreEssais
-        );
-
-        if (reponse.startsWith("Bravo")) {
-            partieTerminee = true;
-        }
-
+        // La conversation contient l'historique des questions-réponses depuis le début.
         afficherConversation();
-
         return null;
     }
+
 
     /**
      * Pour un nouveau chat.
